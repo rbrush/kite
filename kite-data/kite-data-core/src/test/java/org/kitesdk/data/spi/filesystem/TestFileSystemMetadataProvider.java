@@ -100,7 +100,7 @@ public class TestFileSystemMetadataProvider extends TestMetadataProviders {
     Path namedDirectory = new Path(testDirectory, new Path(NAMESPACE, NAME));
     Path metadataDirectory = new Path(namedDirectory, ".metadata");
     Path propertiesFile = new Path(metadataDirectory, "descriptor.properties");
-    Path schemaFile = new Path(metadataDirectory, "schema.avsc");
+    Path schemaDirectory = new Path(metadataDirectory, "schemas");
 
     Assert.assertTrue("Named directory should exist for name:" + NAME,
         fileSystem.exists(namedDirectory));
@@ -108,8 +108,8 @@ public class TestFileSystemMetadataProvider extends TestMetadataProviders {
         fileSystem.exists(metadataDirectory));
     Assert.assertTrue("Descriptor properties file should exist", 
         fileSystem.exists(propertiesFile));
-    Assert.assertTrue("Descriptor schema file should exist",
-        fileSystem.exists(schemaFile));
+    Assert.assertTrue("Descriptor schema directory should exist",
+        fileSystem.exists(schemaDirectory));
   }
 
   @Test
@@ -121,14 +121,14 @@ public class TestFileSystemMetadataProvider extends TestMetadataProviders {
     Path namedDirectory = new Path(loaded.getLocation());
     Path metadataDirectory = new Path(namedDirectory, ".metadata");
     Path propertiesFile = new Path(metadataDirectory, "descriptor.properties");
-    Path schemaFile = new Path(metadataDirectory, "schema.avsc");
+    Path schemaDirectory = new Path(metadataDirectory, "schemas");
 
     boolean result = provider.delete(NAMESPACE, NAME);
     Assert.assertTrue(result);
     Assert.assertFalse("Descriptor properties file should not exist",
         fileSystem.exists(propertiesFile));
-    Assert.assertFalse("Descriptor schema file should not exist",
-        fileSystem.exists(schemaFile));
+    Assert.assertFalse("Descriptor schema directory should not exist",
+        fileSystem.exists(schemaDirectory));
     Assert.assertFalse("Metadata directory should not exist",
         fileSystem.exists(metadataDirectory));
     Assert.assertTrue("Named directory should still exist for name:" + NAME,
