@@ -23,7 +23,6 @@ import org.kitesdk.data.DatasetException;
 import org.kitesdk.data.DatasetIOException;
 import org.kitesdk.data.DatasetNotFoundException;
 import org.kitesdk.data.impl.Accessor;
-import org.kitesdk.data.spi.AbstractDatasetRepository;
 import org.kitesdk.data.spi.AbstractMetadataProvider;
 import org.kitesdk.data.spi.MetadataProvider;
 import com.google.common.base.Charsets;
@@ -79,11 +78,13 @@ public class FileSystemMetadataProvider extends AbstractMetadataProvider {
   private static final String FORMAT_FIELD_NAME = "format";
   private static final String LOCATION_FIELD_NAME = "location";
   private static final String COMPRESSION_TYPE_FIELD_NAME = "compressionType";
+  private static final String IMMUTABLE_PARTITIONS_FIELD_NAME = "immutablePartitions";
   private static final String DEFAULT_NAMESPACE = "default";
 
   private static final Set<String> RESERVED_PROPERTIES = Sets.newHashSet(
       PARTITION_EXPRESSION_FIELD_NAME, VERSION_FIELD_NAME, FORMAT_FIELD_NAME,
-      LOCATION_FIELD_NAME, COMPRESSION_TYPE_FIELD_NAME);
+      LOCATION_FIELD_NAME, COMPRESSION_TYPE_FIELD_NAME,
+      IMMUTABLE_PARTITIONS_FIELD_NAME);
 
   private final Configuration conf;
   private final Path rootDirectory;
@@ -145,6 +146,12 @@ public class FileSystemMetadataProvider extends AbstractMetadataProvider {
     if (properties.containsKey(PARTITION_EXPRESSION_FIELD_NAME)) {
       builder.partitionStrategy(Accessor.getDefault().fromExpression(properties
           .getProperty(PARTITION_EXPRESSION_FIELD_NAME)));
+    }
+    if (properties.containsKey(IMMUTABLE_PARTITIONS_FIELD_NAME)) {
+      boolean immutablePartitions = Boolean.parseBoolean(
+          properties.getProperty(IMMUTABLE_PARTITIONS_FIELD_NAME));
+
+      builder.immutablePartitions(immutablePartitions);
     }
 
     SchemaManager manager = SchemaManager.load(conf,
@@ -499,6 +506,7 @@ public class FileSystemMetadataProvider extends AbstractMetadataProvider {
     properties.setProperty(VERSION_FIELD_NAME, METADATA_VERSION);
     properties.setProperty(FORMAT_FIELD_NAME, descriptor.getFormat().getName());
     properties.setProperty(COMPRESSION_TYPE_FIELD_NAME, descriptor.getCompressionType().getName());
+    properties.setProperty(IMMUTABLE_PARTITIONS_FIELD_NAME, Boolean.toString(descriptor.hasImmutablePartitions()));
 
     final URI dataLocation = descriptor.getLocation();
     if (dataLocation != null) {

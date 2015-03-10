@@ -24,10 +24,14 @@ import org.kitesdk.data.Dataset;
 import org.kitesdk.data.DatasetDescriptor;
 import org.kitesdk.data.DatasetWriter;
 import org.kitesdk.data.Datasets;
+import org.kitesdk.data.Flushable;
+import org.kitesdk.data.PartitionExistsException;
 import org.kitesdk.data.PartitionStrategy;
 import com.google.common.io.Closeables;
 import com.google.common.io.Files;
 import java.io.IOException;
+import java.net.URI;
+
 import org.apache.avro.generic.GenericData.Record;
 import org.apache.avro.generic.GenericRecordBuilder;
 import org.apache.hadoop.conf.Configuration;
@@ -40,6 +44,8 @@ import org.kitesdk.data.TestHelpers;
 import org.kitesdk.data.View;
 
 import static org.kitesdk.data.spi.filesystem.DatasetTestUtilities.USER_SCHEMA;
+import static org.kitesdk.data.spi.filesystem.DatasetTestUtilities.checkTestUsers;
+import static org.kitesdk.data.spi.filesystem.DatasetTestUtilities.writeTestUsers;
 
 public class TestPartitionedDatasetWriter {
 
@@ -156,6 +162,86 @@ public class TestPartitionedDatasetWriter {
     Assert.assertEquals("Should read from provided partition",
         Sets.newHashSet(u2),
         DatasetTestUtilities.materialize(users.with("version", 7)));
+  }
+
+  @Test
+  @SuppressWarnings("deprecation")
+  public void testWriteToExistingImmutablePartition() throws IOException {
+    PartitionStrategy partitionStrategy = new PartitionStrategy.Builder()
+        .identity("username", "username_part").identity("email", "email_part").build();
+
+    Dataset<Record> ds = repo.create("ns", "partitioned_users", new DatasetDescriptor.Builder()
+        .schema(USER_SCHEMA)
+        .partitionStrategy(partitionStrategy)
+        .immutablePartitions(true)
+        .build());
+
+    writeTestUsers(ds, 10);
+    checkTestUsers(ds, 10);
+
+    // Second attempt should fail.
+    boolean caught = false;
+    try {
+
+      writeTestUsers(ds, 10);
+
+    } catch (PartitionExistsException e) {
+      caught = true;
+    }
+
+    if (!caught) {
+      Assert.fail("Expected PartitionExistsException when writing to immutable partition.");
+    }
+
+    // ensure no additional data was written in failed attempt.
+    checkTestUsers(ds, 10);
+  }
+
+  @Test
+  @SuppressWarnings("deprecation")
+  public void testImmutablePartitionNotVisibleUntilClosed() throws IOException {
+
+    PartitionStrategy partitionStrategy = new PartitionStrategy.Builder()
+        .identity("username", "username_part").identity("email", "email_part").build();
+
+    Dataset<Record> ds = repo.create("ns", "partitioned_users", new DatasetDescriptor.Builder()
+        .schema(USER_SCHEMA)
+        .partitionStrategy(partitionStrategy)
+        .immutablePartitions(true)
+        .build());
+
+    DatasetWriter<Record> writer = null;
+    try {
+      writer = ds.newWriter();
+      for (int i = 0; i < 10; i++) {
+        GenericRecordBuilder recordBuilder = new GenericRecordBuilder(USER_SCHEMA)
+            .set("username", "test-" + i)
+            .set("email", "test-" + i);
+        writer.write(recordBuilder.build());
+      }
+
+      // flush the content, which will write to a temporary location
+      // but won't be visible in the immutable dataset until it is closed
+      ((Flushable) writer).flush();
+
+      // ensure nothing is visible from the unclosed writer
+      for (int i = 0; i < 10; i++) {
+        Assert.assertFalse("Partitioned directory should not exist in unclosed writer",
+            fileSystem.exists(new Path(testDirectory, "username_part=test-" + i + "/email_part=test-" + i)));
+      }
+
+    } finally {
+      if (writer != null) {
+        writer.close();
+      }
+    }
+
+    // the expected partitions should now be visible, since the writer was closed
+    for (int i = 0; i < 10; i++) {
+      Assert.assertTrue("Partitioned directory should exist after writer is closed",
+          fileSystem.exists(new Path(new Path(ds.getDescriptor().getLocation()),
+              "username_part=test-" + i + "/email_part=test-" + i)));
+    }
   }
 
   private static <E> void writeToView(View<E> view, E... entities) {

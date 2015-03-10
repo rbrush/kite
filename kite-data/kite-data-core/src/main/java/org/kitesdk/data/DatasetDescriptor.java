@@ -76,6 +76,7 @@ public class DatasetDescriptor {
   private final PartitionStrategy partitionStrategy;
   private final ColumnMapping columnMappings;
   private final CompressionType compressionType;
+  private final boolean immutablePartitions;
 
   /**
    * Create an instance of this class with the supplied {@link Schema},
@@ -119,6 +120,26 @@ public class DatasetDescriptor {
       @Nullable PartitionStrategy partitionStrategy,
       @Nullable ColumnMapping columnMapping,
       @Nullable CompressionType compressionType) {
+    this(schema, schemaUri, format, location,
+        properties, partitionStrategy, columnMapping, null, false);
+  }
+
+  /**
+   * Create an instance of this class with the supplied {@link Schema}, optional
+   * URL, {@link Format}, optional location URL, optional
+   * {@link PartitionStrategy}, optional {@link ColumnMapping}, optional
+   * {@link CompressionType}, and flag indicating whether partitions
+   * are immutable.
+   *
+   * @since 1.1.0
+   */
+  public DatasetDescriptor(Schema schema, @Nullable URI schemaUri,
+                           Format format, @Nullable URI location,
+                           @Nullable Map<String, String> properties,
+                           @Nullable PartitionStrategy partitionStrategy,
+                           @Nullable ColumnMapping columnMapping,
+                           @Nullable CompressionType compressionType,
+                           boolean immutablePartitions) {
     // URI can be null if the descriptor is configuring a new Dataset
     Preconditions.checkArgument(
         (location == null) || (location.getScheme() != null),
@@ -141,7 +162,10 @@ public class DatasetDescriptor {
     // if no compression format is present, get the default from the format
     this.compressionType = compressionType == null ?
         this.format.getDefaultCompressionType() : compressionType;
+
+    this.immutablePartitions = immutablePartitions;
   }
+
 
   /**
    * Get the associated {@link Schema}. Depending on the underlying storage
@@ -274,6 +298,15 @@ public class DatasetDescriptor {
   }
 
   /**
+   * Returns true if the dataset has immutable partitions (that is,
+   * partitions are created atomically with data in place and cannot
+   * be further modified), false otherwise.
+   */
+  public boolean hasImmutablePartitions() {
+    return immutablePartitions;
+  }
+
+  /**
    * Returns true if an associated dataset is column mapped (that is, has an
    * associated {@link ColumnMapping}), false otherwise.
    *
@@ -346,6 +379,7 @@ public class DatasetDescriptor {
     private ColumnMapping columnMapping;
     private ColumnMapping copiedMapping;
     private CompressionType compressionType;
+    private boolean immutablePartitions = false;
 
     public Builder() {
       this.properties = Maps.newHashMap();
@@ -374,6 +408,7 @@ public class DatasetDescriptor {
       this.copiedMapping = descriptor.columnMappings;
       this.compressionType = descriptor.compressionType;
       this.partitionStrategy = descriptor.partitionStrategy;
+      this.immutablePartitions = descriptor.immutablePartitions;
       properties.putAll(descriptor.properties);
     }
 
@@ -898,6 +933,23 @@ public class DatasetDescriptor {
       return compressionType(CompressionType.forName(compressionTypeName));
     }
 
+
+    /**
+     * Configure the dataset's use of immutable partitions.. If not set,
+     * default to false.
+     *
+     * @param immutablePartitions
+     *         boolean indicating whether partitions should be immutable
+     *
+     * @return This builder for method chaining
+     *
+     * @since 1.1.0
+     */
+    public Builder immutablePartitions(boolean immutablePartitions) {
+      this.immutablePartitions = immutablePartitions;
+      return this;
+    }
+
     /**
      * Build an instance of the configured dataset descriptor. Subsequent calls
      * produce new instances that are similarly configured.
@@ -941,7 +993,7 @@ public class DatasetDescriptor {
 
       return new DatasetDescriptor(
           schema, schemaUri, format, location, properties, partitionStrategy,
-          columnMapping, compressionType);
+          columnMapping, compressionType, immutablePartitions);
     }
 
     private InputStream open(URI location) throws IOException {

@@ -15,18 +15,26 @@
  */
 package org.kitesdk.data.spi.filesystem;
 
+import java.net.URI;
 import java.util.Map;
+import java.util.UUID;
+
+import org.kitesdk.data.Dataset;
 import org.kitesdk.data.DatasetDescriptor;
 import org.kitesdk.data.DatasetWriter;
+import org.kitesdk.data.Flushable;
 import org.kitesdk.data.Format;
 import org.kitesdk.data.Formats;
 import org.kitesdk.data.PartitionStrategy;
 import org.kitesdk.data.Syncable;
 import org.kitesdk.data.ValidationException;
+import org.kitesdk.data.spi.AbstractDataset;
 import org.kitesdk.data.spi.AbstractDatasetWriter;
+import org.kitesdk.data.spi.DatasetRepositories;
 import org.kitesdk.data.spi.DescriptorUtil;
 import org.kitesdk.data.spi.EntityAccessor;
 import org.kitesdk.data.spi.FieldPartitioner;
+import org.kitesdk.data.spi.Mergeable;
 import org.kitesdk.data.spi.PartitionListener;
 import org.kitesdk.data.spi.StorageKey;
 import org.kitesdk.data.spi.ReaderWriterState;
@@ -39,6 +47,7 @@ import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.util.concurrent.UncheckedExecutionException;
 import org.apache.hadoop.fs.Path;
+import org.kitesdk.data.spi.TemporaryDatasetRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,6 +74,11 @@ abstract class PartitionedDatasetWriter<E, W extends FileSystemWriter<E>> extend
   static <E> PartitionedDatasetWriter<E, ?> newWriter(FileSystemView<E> view) {
     DatasetDescriptor descriptor = view.getDataset().getDescriptor();
     Format format = descriptor.getFormat();
+
+    if (descriptor.hasImmutablePartitions()) {
+      return newImmutableWriter(view);
+    }
+
     if (Formats.PARQUET.equals(format)) {
       // by default, Parquet is not durable
       if (DescriptorUtil.isDisabled(
@@ -78,6 +92,35 @@ abstract class PartitionedDatasetWriter<E, W extends FileSystemWriter<E>> extend
     } else {
       return new NonDurablePartitionedDatasetWriter<E>(view);
     }
+  }
+
+  private static <E> PartitionedDatasetWriter<E, ?> newImmutableWriter(FileSystemView<E> view) {
+    FileSystemDataset dataset = (FileSystemDataset) view.getDataset();
+
+    // the target repository must be filesystem based because
+    // the given view is.
+    FileSystemDatasetRepository targetRepo =
+        (FileSystemDatasetRepository) DatasetRepositories.repositoryFor(dataset.getUri());
+
+    // create a temporary dataset containing a mutable view to write to,
+    // which is then merged into the target when the write is complete
+    // a UUID is used to ensure it is unique
+    TemporaryDatasetRepository tempRepo = targetRepo.getTemporaryRepository(
+        dataset.getNamespace(), UUID.randomUUID().toString().replace('-', '_'));
+
+    DatasetDescriptor tempDescriptor = new DatasetDescriptor.Builder(
+        dataset.getDescriptor()).immutablePartitions(false).location((URI) null).build();
+
+    Dataset<E> tempDataset = tempRepo.create(dataset.getNamespace(),
+        dataset.getName(), tempDescriptor);
+
+    FileSystemView<E> tempView = (FileSystemView) ((AbstractDataset<E>) tempDataset)
+        .filter(view.getConstraints());
+
+    // create a writer for the temporary view and wrap it with one that
+    // will do the atomic merge when closed.
+    return new ImmutablePartitionedDatasetWriter<E>(tempView, view,
+        newWriter(tempView), tempRepo);
   }
 
   private PartitionedDatasetWriter(FileSystemView<E> view) {
@@ -337,6 +380,81 @@ abstract class PartitionedDatasetWriter<E, W extends FileSystemWriter<E>> extend
       for (FileSystemWriter.IncrementalWriter<E> writer : cachedWriters.asMap().values()) {
         LOG.debug("Syncing partition writer:{}", writer);
         writer.sync();
+      }
+    }
+  }
+
+  /**
+   * DatasetWriter that simply defers everything to a delegate writing to a temporary
+   * location, and then merges into the final target when the writer is closed.
+   */
+  private static class ImmutablePartitionedDatasetWriter<E> extends PartitionedDatasetWriter<E, FileSystemWriter.IncrementalWriter<E>>
+      implements org.kitesdk.data.Flushable, Syncable {
+
+    private final PartitionedDatasetWriter<E, ?> delegate;
+
+    private final FileSystemView<E> tempView;
+
+    private final FileSystemView<E> targetView;
+
+    private final TemporaryDatasetRepository tempRepo;
+
+    private ImmutablePartitionedDatasetWriter(FileSystemView<E> tempView,
+                                              FileSystemView<E> targetView,
+                                              PartitionedDatasetWriter<E,?> delegate,
+                                              TemporaryDatasetRepository tempRepo) {
+      super(tempView);
+      this.tempView = tempView;
+      this.targetView = targetView;
+      this.delegate = delegate;
+      this.tempRepo = tempRepo;
+    }
+
+    @Override
+    public void initialize() {
+      delegate.initialize();
+    }
+
+    @Override
+    public void write(E entity) {
+      delegate.write(entity);
+    }
+
+    @Override
+    public boolean isOpen() {
+      return delegate.isOpen();
+    }
+
+    @Override
+    public void flush() {
+      if (delegate instanceof Flushable)
+        ((Flushable) delegate).flush();
+    }
+
+    @Override
+    protected CacheLoader<StorageKey, FileSystemWriter.IncrementalWriter<E>> createCacheLoader() {
+      return (CacheLoader<StorageKey, FileSystemWriter.IncrementalWriter<E>>) delegate.createCacheLoader();
+    }
+
+    @Override
+    public void sync() {
+
+      if (delegate instanceof Syncable)
+        ((Syncable) delegate).sync();
+    }
+
+    @Override
+    public void close() {
+
+      if (delegate.isOpen()) {
+
+        delegate.close();
+
+        // merge and delete the temporary data.
+        ((Mergeable<Dataset<E>>) targetView.getDataset()).merge(tempView.getDataset());
+
+        tempRepo.delete();
+
       }
     }
   }

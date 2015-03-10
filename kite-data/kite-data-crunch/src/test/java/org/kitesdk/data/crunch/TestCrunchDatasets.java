@@ -192,6 +192,34 @@ public abstract class TestCrunchDatasets extends MiniDFSTest {
   }
 
   @Test
+  public void testImmutablePartionTarget() throws IOException {
+    PartitionStrategy partitionStrategy = new PartitionStrategy.Builder().hash(
+        "username", 2).build();
+
+    Dataset<Record> inputDataset = repo.create("ns", "in", new DatasetDescriptor.Builder()
+        .schema(USER_SCHEMA).partitionStrategy(partitionStrategy).build());
+    Dataset<Record> outputDataset = repo.create("ns", "out", new DatasetDescriptor.Builder()
+        .schema(USER_SCHEMA).partitionStrategy(partitionStrategy)
+        .immutablePartitions(true).build());
+
+    writeTestUsers(inputDataset, 10);
+
+    PartitionKey key = new PartitionKey(0);
+    Dataset<Record> inputPart0 =
+        ((PartitionedDataset<Record>) inputDataset).getPartition(key, false);
+    Dataset<Record> outputPart0 =
+        ((PartitionedDataset<Record>) outputDataset).getPartition(key, true);
+
+    Pipeline pipeline = new MRPipeline(TestCrunchDatasets.class);
+    PCollection<GenericData.Record> data = pipeline.read(
+        CrunchDatasets.asSource(inputPart0));
+    pipeline.write(data, CrunchDatasets.asTarget(outputPart0), Target.WriteMode.APPEND);
+    pipeline.run();
+
+    Assert.assertEquals(5, datasetSize(outputPart0));
+  }
+
+  @Test
   public void testPartitionedSourceAndTargetWritingToTopLevel() throws IOException {
     PartitionStrategy partitionStrategy = new PartitionStrategy.Builder().hash(
         "username", 2).build();

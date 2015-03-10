@@ -593,9 +593,12 @@ public class DatasetKeyOutputFormat<E> extends OutputFormat<E, Void> {
   private static DatasetDescriptor copy(DatasetDescriptor descriptor) {
     // don't reuse the previous dataset's location and don't use durable
     // parquet writers because fault-tolerance is handled by OutputCommitter
+    // there is also no need to use immutable partitions since
+    // the copy is temporary.
     return new DatasetDescriptor.Builder(descriptor)
         .property(FileSystemProperties.NON_DURABLE_PARQUET_PROP, "true")
         .location((URI) null)
+        .immutablePartitions(false)
         .build();
   }
 
